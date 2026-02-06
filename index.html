@@ -2,9 +2,17 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Retro Snake Game</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Neon Snake 2077</title>
     <style>
+        :root {
+            --bg-color: #0f0f1a;
+            --grid-color: rgba(255, 255, 255, 0.03);
+            --primary: #00ff88;
+            --accent: #ff0055;
+            --text: #ffffff;
+        }
+        
         body {
             display: flex;
             flex-direction: column;
@@ -12,71 +20,246 @@
             justify-content: center;
             height: 100vh;
             margin: 0;
-            background-color: #2c3e50;
-            color: #ecf0f1;
-            font-family: 'Courier New', Courier, monospace;
+            background-color: var(--bg-color);
+            background-image: 
+                linear-gradient(var(--grid-color) 1px, transparent 1px),
+                linear-gradient(90deg, var(--grid-color) 1px, transparent 1px);
+            background-size: 20px 20px;
+            color: var(--text);
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            overflow: hidden;
+            touch-action: none; /* Prevent scroll on mobile */
         }
-        #game-board {
-            background-color: #34495e;
-            border: 5px solid #ecf0f1;
-            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+
+        #game-container {
+            position: relative;
+            box-shadow: 0 0 50px rgba(0, 255, 136, 0.1);
+            border-radius: 12px;
+            overflow: hidden;
         }
-        .score {
+
+        canvas {
+            background-color: rgba(15, 15, 26, 0.8);
+            display: block;
+            border-radius: 12px;
+        }
+
+        .ui-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background: rgba(15, 15, 26, 0.85);
+            backdrop-filter: blur(8px);
+            z-index: 10;
+            transition: opacity 0.3s;
+        }
+
+        .hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        h1 {
+            font-size: 48px;
+            margin: 0 0 20px 0;
+            text-transform: uppercase;
+            letter-spacing: 4px;
+            background: linear-gradient(45deg, #00ff88, #00ccff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            text-shadow: 0 0 20px rgba(0, 255, 136, 0.5);
+        }
+
+        .score-display {
             font-size: 24px;
-            margin-bottom: 20px;
-        }
-        .controls {
-            margin-top: 20px;
+            margin-bottom: 30px;
             color: #bdc3c7;
-            font-size: 14px;
+        }
+
+        button {
+            padding: 15px 40px;
+            font-size: 18px;
+            font-weight: bold;
+            color: var(--bg-color);
+            background: var(--primary);
+            border: none;
+            border-radius: 30px;
+            cursor: pointer;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            box-shadow: 0 0 20px rgba(0, 255, 136, 0.4);
+            transition: transform 0.1s, box-shadow 0.1s;
+        }
+
+        button:active {
+            transform: scale(0.95);
+            box-shadow: 0 0 10px rgba(0, 255, 136, 0.2);
+        }
+
+        .hud {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            font-size: 20px;
+            font-weight: bold;
+            text-shadow: 1px 1px 0 #000;
+            pointer-events: none;
+        }
+
+        .controls-hint {
+            position: absolute;
+            bottom: 20px;
+            color: rgba(255,255,255,0.3);
+            font-size: 12px;
+            pointer-events: none;
+        }
+
+        /* Mobile Adjustments */
+        @media (max-width: 600px) {
+            h1 { font-size: 32px; }
+            #game-container { width: 95vw; height: 95vw; }
+            canvas { width: 100%; height: 100%; }
         }
     </style>
 </head>
 <body>
-    <div class="score">Score: <span id="score">0</span></div>
-    <canvas id="game-board" width="400" height="400"></canvas>
-    <div class="controls">Use Arrow Keys to Move</div>
+
+    <div id="game-container">
+        <canvas id="game-board"></canvas>
+        
+        <div class="hud">SCORE: <span id="current-score">0</span></div>
+        
+        <div id="start-screen" class="ui-overlay">
+            <h1>Neon Snake</h1>
+            <button onclick="startGame()">Start Game</button>
+            <div class="controls-hint" style="margin-top: 20px;">Swipe or Arrow Keys</div>
+        </div>
+
+        <div id="game-over-screen" class="ui-overlay hidden">
+            <h1 style="color: #ff0055; background: none; -webkit-text-fill-color: #ff0055; text-shadow: 0 0 20px rgba(255, 0, 85, 0.5);">Game Over</h1>
+            <div class="score-display">Final Score: <span id="final-score">0</span></div>
+            <button onclick="startGame()">Try Again</button>
+        </div>
+    </div>
 
     <script>
         const canvas = document.getElementById('game-board');
         const ctx = canvas.getContext('2d');
-        const scoreElement = document.getElementById('score');
+        const startScreen = document.getElementById('start-screen');
+        const gameOverScreen = document.getElementById('game-over-screen');
+        const scoreEl = document.getElementById('current-score');
+        const finalScoreEl = document.getElementById('final-score');
 
+        // Responsive Canvas
+        const size = Math.min(window.innerWidth * 0.95, 500); // Max size 500px or 95% of screen
+        // Make it a multiple of gridSize (20)
         const gridSize = 20;
+        const dimension = Math.floor(size / gridSize) * gridSize;
+        
+        canvas.width = dimension;
+        canvas.height = dimension;
+        
         const tileCount = canvas.width / gridSize;
 
         let score = 0;
-        let velocityX = 0;
-        let velocityY = 0;
-        let snake = [{x: 10, y: 10}];
-        let food = {x: 15, y: 15};
-        let gameSpeed = 100; // ms
-        let gameLoopId;
+        let snake = [];
+        let food = {};
+        let velocity = {x: 0, y: 0};
+        let particles = [];
+        let gameRunning = false;
+        let lastTime = 0;
+        let moveTimer = 0;
+        let speed = 100; // ms per move (lower is faster)
 
-        // Listen for keyboard
-        document.addEventListener('keydown', keyDownEvent);
+        // --- Round 1: Input Handling (Touch + Keyboard) ---
+        let touchStartX = 0;
+        let touchStartY = 0;
 
-        function startGame() {
-            // Reset state
-            score = 0;
-            velocityX = 0;
-            velocityY = 0;
-            snake = [{x: 10, y: 10}];
-            placeFood();
-            scoreElement.innerText = score;
+        document.addEventListener('keydown', handleKey);
+        canvas.addEventListener('touchstart', e => {
+            touchStartX = e.touches[0].clientX;
+            touchStartY = e.touches[0].clientY;
+            e.preventDefault();
+        }, {passive: false});
+
+        canvas.addEventListener('touchmove', e => {
+            e.preventDefault(); // Prevent scrolling
+        }, {passive: false});
+
+        canvas.addEventListener('touchend', e => {
+            if (!gameRunning) return;
+            const touchEndX = e.changedTouches[0].clientX;
+            const touchEndY = e.changedTouches[0].clientY;
             
-            if (gameLoopId) clearInterval(gameLoopId);
-            gameLoopId = setInterval(gameLoop, gameSpeed);
+            const dx = touchEndX - touchStartX;
+            const dy = touchEndY - touchStartY;
+            
+            if (Math.abs(dx) > Math.abs(dy)) {
+                // Horizontal
+                if (dx > 0 && velocity.x !== -1) velocity = {x: 1, y: 0};
+                else if (dx < 0 && velocity.x !== 1) velocity = {x: -1, y: 0};
+            } else {
+                // Vertical
+                if (dy > 0 && velocity.y !== -1) velocity = {x: 0, y: 1};
+                else if (dy < 0 && velocity.y !== 1) velocity = {x: 0, y: -1};
+            }
+        });
+
+        function handleKey(e) {
+            if (!gameRunning) return;
+            switch(e.keyCode) {
+                case 37: if(velocity.x !== 1) velocity = {x: -1, y: 0}; break;
+                case 38: if(velocity.y !== 1) velocity = {x: 0, y: -1}; break;
+                case 39: if(velocity.x !== -1) velocity = {x: 1, y: 0}; break;
+                case 40: if(velocity.y !== -1) velocity = {x: 0, y: 1}; break;
+            }
         }
 
-        function gameLoop() {
-            update();
+        function startGame() {
+            startScreen.classList.add('hidden');
+            gameOverScreen.classList.add('hidden');
+            
+            score = 0;
+            scoreEl.innerText = 0;
+            snake = [{x: 10, y: 10}, {x: 9, y: 10}, {x: 8, y: 10}];
+            velocity = {x: 1, y: 0};
+            particles = [];
+            gameRunning = true;
+            speed = 120;
+            
+            placeFood();
+            requestAnimationFrame(gameLoop);
+        }
+
+        // --- Round 3: Game Loop (RAF) ---
+        function gameLoop(timestamp) {
+            if (!gameRunning) return;
+            
+            const deltaTime = timestamp - lastTime;
+            lastTime = timestamp;
+
+            // Render particles smoothly
+            updateParticles();
             draw();
+
+            // Logic update based on speed
+            moveTimer += deltaTime;
+            if (moveTimer > speed) {
+                update();
+                moveTimer = 0;
+            }
+
+            requestAnimationFrame(gameLoop);
         }
 
         function update() {
-            // Move snake
-            const head = {x: snake[0].x + velocityX, y: snake[0].y + velocityY};
+            const head = {x: snake[0].x + velocity.x, y: snake[0].y + velocity.y};
 
             // Wrap walls
             if (head.x < 0) head.x = tileCount - 1;
@@ -84,82 +267,128 @@
             if (head.y < 0) head.y = tileCount - 1;
             if (head.y >= tileCount) head.y = 0;
 
-            // Check collision with self (only if moving)
-            if (velocityX !== 0 || velocityY !== 0) {
-                for (let i = 0; i < snake.length; i++) {
-                    if (head.x === snake[i].x && head.y === snake[i].y) {
-                        // Game Over
-                        startGame();
-                        return;
-                    }
+            // Self Collision
+            for (let part of snake) {
+                if (head.x === part.x && head.y === part.y) {
+                    gameOver();
+                    return;
                 }
             }
 
             snake.unshift(head);
 
-            // Check food
             if (head.x === food.x && head.y === food.y) {
+                // Eat
                 score += 10;
-                scoreElement.innerText = score;
+                scoreEl.innerText = score;
+                // Round 4: Particles
+                spawnParticles(head.x * gridSize + gridSize/2, head.y * gridSize + gridSize/2, '#e74c3c');
                 placeFood();
-                // Speed up slightly
-                if (gameSpeed > 50) gameSpeed -= 1;
-                clearInterval(gameLoopId);
-                gameLoopId = setInterval(gameLoop, gameSpeed);
+                // Speed up
+                if (speed > 50) speed *= 0.98;
             } else {
-                // Remove tail if not eating
                 snake.pop();
             }
         }
 
+        // --- Round 4: Particle System ---
+        function spawnParticles(x, y, color) {
+            for (let i = 0; i < 10; i++) {
+                particles.push({
+                    x: x,
+                    y: y,
+                    vx: (Math.random() - 0.5) * 8,
+                    vy: (Math.random() - 0.5) * 8,
+                    life: 1.0,
+                    color: color
+                });
+            }
+        }
+
+        function updateParticles() {
+            for (let i = particles.length - 1; i >= 0; i--) {
+                let p = particles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.life -= 0.05;
+                if (p.life <= 0) particles.splice(i, 1);
+            }
+        }
+
+        // --- Round 2: Visuals ---
         function draw() {
-            // Clear screen
-            ctx.fillStyle = '#34495e';
+            // BG
+            ctx.fillStyle = '#0f0f1a';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-            // Draw Snake
-            ctx.fillStyle = '#2ecc71';
-            for (let i = 0; i < snake.length; i++) {
-                ctx.fillRect(snake[i].x * gridSize, snake[i].y * gridSize, gridSize - 2, gridSize - 2);
-            }
+            // Food (Glowing)
+            ctx.shadowBlur = 15;
+            ctx.shadowColor = '#ff0055';
+            ctx.fillStyle = '#ff0055';
+            ctx.beginPath();
+            ctx.arc(food.x * gridSize + gridSize/2, food.y * gridSize + gridSize/2, gridSize/2 - 2, 0, Math.PI*2);
+            ctx.fill();
+            ctx.shadowBlur = 0;
 
-            // Draw Food
-            ctx.fillStyle = '#e74c3c';
-            ctx.fillRect(food.x * gridSize, food.y * gridSize, gridSize - 2, gridSize - 2);
+            // Snake
+            snake.forEach((part, index) => {
+                // Gradient or solid color
+                ctx.fillStyle = index === 0 ? '#ffffff' : '#00ff88';
+                
+                if (index === 0) {
+                    // Head glow
+                    ctx.shadowBlur = 20;
+                    ctx.shadowColor = '#00ff88';
+                } else {
+                    ctx.shadowBlur = 0;
+                }
+
+                // Rounded Rects
+                let x = part.x * gridSize;
+                let y = part.y * gridSize;
+                let s = gridSize - 2;
+                let r = 4;
+                
+                ctx.beginPath();
+                ctx.moveTo(x+r, y);
+                ctx.arcTo(x+s, y, x+s, y+s, r);
+                ctx.arcTo(x+s, y+s, x, y+s, r);
+                ctx.arcTo(x, y+s, x, y, r);
+                ctx.arcTo(x, y, x+s, y, r);
+                ctx.fill();
+            });
+            ctx.shadowBlur = 0;
+
+            // Particles
+            particles.forEach(p => {
+                ctx.globalAlpha = p.life;
+                ctx.fillStyle = p.color;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, 3, 0, Math.PI*2);
+                ctx.fill();
+            });
+            ctx.globalAlpha = 1.0;
         }
 
         function placeFood() {
-            food.x = Math.floor(Math.random() * tileCount);
-            food.y = Math.floor(Math.random() * tileCount);
-            
-            // Don't place on snake
-            for (let i = 0; i < snake.length; i++) {
-                if (food.x === snake[i].x && food.y === snake[i].y) {
-                    placeFood();
+            food = {
+                x: Math.floor(Math.random() * tileCount),
+                y: Math.floor(Math.random() * tileCount)
+            };
+            // Check overlap
+            for (let part of snake) {
+                if (part.x === food.x && part.y === food.y) {
+                    placeFood(); 
                     break;
                 }
             }
         }
 
-        function keyDownEvent(e) {
-            switch (e.keyCode) {
-                case 37: // Left
-                    if (velocityX !== 1) { velocityX = -1; velocityY = 0; }
-                    break;
-                case 38: // Up
-                    if (velocityY !== 1) { velocityX = 0; velocityY = -1; }
-                    break;
-                case 39: // Right
-                    if (velocityX !== -1) { velocityX = 1; velocityY = 0; }
-                    break;
-                case 40: // Down
-                    if (velocityY !== -1) { velocityX = 0; velocityY = 1; }
-                    break;
-            }
+        function gameOver() {
+            gameRunning = false;
+            finalScoreEl.innerText = score;
+            gameOverScreen.classList.remove('hidden');
         }
-
-        // Start initial loop
-        startGame();
     </script>
 </body>
 </html>
