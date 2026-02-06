@@ -1,0 +1,6 @@
+services:
+  - type: web
+    name: snake-game-auto
+    env: static
+    staticPublishPath: ./
+    buildCommand: ""
