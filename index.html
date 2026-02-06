@@ -29,6 +29,7 @@
             font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
             overflow: hidden;
             touch-action: none; /* Prevent scroll on mobile */
+            user-select: none;
         }
 
         #game-container {
@@ -106,10 +107,29 @@
             position: absolute;
             top: 20px;
             left: 20px;
+            width: calc(100% - 40px);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            pointer-events: none;
+            z-index: 5;
+        }
+
+        .score-box {
             font-size: 20px;
             font-weight: bold;
             text-shadow: 1px 1px 0 #000;
-            pointer-events: none;
+        }
+
+        #pause-btn {
+            pointer-events: auto;
+            background: rgba(255, 255, 255, 0.1);
+            color: #fff;
+            border: 1px solid rgba(255,255,255,0.2);
+            padding: 8px 16px;
+            font-size: 14px;
+            box-shadow: none;
+            backdrop-filter: blur(4px);
         }
 
         .controls-hint {
@@ -133,12 +153,20 @@
     <div id="game-container">
         <canvas id="game-board"></canvas>
         
-        <div class="hud">SCORE: <span id="current-score">0</span></div>
+        <div class="hud">
+            <div class="score-box">SCORE: <span id="current-score">0</span></div>
+            <button id="pause-btn" onclick="togglePause()">II</button>
+        </div>
         
         <div id="start-screen" class="ui-overlay">
             <h1>Neon Snake</h1>
             <button onclick="startGame()">Start Game</button>
-            <div class="controls-hint" style="margin-top: 20px;">Swipe or Arrow Keys</div>
+            <div class="controls-hint" style="margin-top: 20px;">Swipe, Arrow Keys, or Space to Pause</div>
+        </div>
+
+        <div id="pause-screen" class="ui-overlay hidden">
+            <h1>PAUSED</h1>
+            <button onclick="togglePause()">Resume</button>
         </div>
 
         <div id="game-over-screen" class="ui-overlay hidden">
@@ -152,13 +180,14 @@
         const canvas = document.getElementById('game-board');
         const ctx = canvas.getContext('2d');
         const startScreen = document.getElementById('start-screen');
+        const pauseScreen = document.getElementById('pause-screen');
         const gameOverScreen = document.getElementById('game-over-screen');
         const scoreEl = document.getElementById('current-score');
         const finalScoreEl = document.getElementById('final-score');
+        const pauseBtn = document.getElementById('pause-btn');
 
         // Responsive Canvas
-        const size = Math.min(window.innerWidth * 0.95, 500); // Max size 500px or 95% of screen
-        // Make it a multiple of gridSize (20)
+        const size = Math.min(window.innerWidth * 0.95, 500); 
         const gridSize = 20;
         const dimension = Math.floor(size / gridSize) * gridSize;
         
@@ -173,27 +202,65 @@
         let velocity = {x: 0, y: 0};
         let particles = [];
         let gameRunning = false;
+        let isPaused = false;
         let lastTime = 0;
         let moveTimer = 0;
-        let speed = 100; // ms per move (lower is faster)
+        let speed = 120;
 
-        // --- Round 1: Input Handling (Touch + Keyboard) ---
+        // --- Audio System (Synthesizer) ---
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+
+        function playSound(type) {
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+
+            const now = audioCtx.currentTime;
+            
+            if (type === 'eat') {
+                // High pitched ping
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(600, now);
+                osc.frequency.exponentialRampToValueAtTime(1200, now + 0.1);
+                gain.gain.setValueAtTime(0.3, now);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+                osc.start(now);
+                osc.stop(now + 0.1);
+            } else if (type === 'crash') {
+                // Low pitched buzz/noise approximation
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(100, now);
+                osc.frequency.exponentialRampToValueAtTime(50, now + 0.3);
+                gain.gain.setValueAtTime(0.5, now);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+                osc.start(now);
+                osc.stop(now + 0.3);
+            }
+        }
+
+        // --- Input Handling ---
         let touchStartX = 0;
         let touchStartY = 0;
 
         document.addEventListener('keydown', handleKey);
+        
         canvas.addEventListener('touchstart', e => {
             touchStartX = e.touches[0].clientX;
             touchStartY = e.touches[0].clientY;
+            // Unlock audio context on first touch
+            if (audioCtx.state === 'suspended') audioCtx.resume();
             e.preventDefault();
         }, {passive: false});
 
         canvas.addEventListener('touchmove', e => {
-            e.preventDefault(); // Prevent scrolling
+            e.preventDefault();
         }, {passive: false});
 
         canvas.addEventListener('touchend', e => {
-            if (!gameRunning) return;
+            if (!gameRunning || isPaused) return;
             const touchEndX = e.changedTouches[0].clientX;
             const touchEndY = e.changedTouches[0].clientY;
             
@@ -201,18 +268,25 @@
             const dy = touchEndY - touchStartY;
             
             if (Math.abs(dx) > Math.abs(dy)) {
-                // Horizontal
                 if (dx > 0 && velocity.x !== -1) velocity = {x: 1, y: 0};
                 else if (dx < 0 && velocity.x !== 1) velocity = {x: -1, y: 0};
             } else {
-                // Vertical
                 if (dy > 0 && velocity.y !== -1) velocity = {x: 0, y: 1};
                 else if (dy < 0 && velocity.y !== 1) velocity = {x: 0, y: -1};
             }
         });
 
         function handleKey(e) {
-            if (!gameRunning) return;
+            // Unlock audio
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+
+            if (e.code === 'Space') {
+                togglePause();
+                return;
+            }
+
+            if (!gameRunning || isPaused) return;
+
             switch(e.keyCode) {
                 case 37: if(velocity.x !== 1) velocity = {x: -1, y: 0}; break;
                 case 38: if(velocity.y !== 1) velocity = {x: 0, y: -1}; break;
@@ -224,6 +298,8 @@
         function startGame() {
             startScreen.classList.add('hidden');
             gameOverScreen.classList.add('hidden');
+            pauseScreen.classList.add('hidden');
+            pauseBtn.style.display = 'block';
             
             score = 0;
             scoreEl.innerText = 0;
@@ -231,45 +307,59 @@
             velocity = {x: 1, y: 0};
             particles = [];
             gameRunning = true;
+            isPaused = false;
             speed = 120;
             
+            // Audio unlock attempt
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+
             placeFood();
             requestAnimationFrame(gameLoop);
         }
 
-        // --- Round 3: Game Loop (RAF) ---
+        function togglePause() {
+            if (!gameRunning) return;
+            isPaused = !isPaused;
+            if (isPaused) {
+                pauseScreen.classList.remove('hidden');
+                pauseBtn.innerText = '▶';
+            } else {
+                pauseScreen.classList.add('hidden');
+                pauseBtn.innerText = 'II';
+            }
+        }
+
         function gameLoop(timestamp) {
             if (!gameRunning) return;
             
+            requestAnimationFrame(gameLoop);
+
             const deltaTime = timestamp - lastTime;
             lastTime = timestamp;
 
-            // Render particles smoothly
+            if (isPaused) return;
+
             updateParticles();
             draw();
 
-            // Logic update based on speed
             moveTimer += deltaTime;
             if (moveTimer > speed) {
                 update();
                 moveTimer = 0;
             }
-
-            requestAnimationFrame(gameLoop);
         }
 
         function update() {
             const head = {x: snake[0].x + velocity.x, y: snake[0].y + velocity.y};
 
-            // Wrap walls
             if (head.x < 0) head.x = tileCount - 1;
             if (head.x >= tileCount) head.x = 0;
             if (head.y < 0) head.y = tileCount - 1;
             if (head.y >= tileCount) head.y = 0;
 
-            // Self Collision
             for (let part of snake) {
                 if (head.x === part.x && head.y === part.y) {
+                    playSound('crash');
                     gameOver();
                     return;
                 }
@@ -278,20 +368,17 @@
             snake.unshift(head);
 
             if (head.x === food.x && head.y === food.y) {
-                // Eat
                 score += 10;
                 scoreEl.innerText = score;
-                // Round 4: Particles
+                playSound('eat');
                 spawnParticles(head.x * gridSize + gridSize/2, head.y * gridSize + gridSize/2, '#e74c3c');
                 placeFood();
-                // Speed up
                 if (speed > 50) speed *= 0.98;
             } else {
                 snake.pop();
             }
         }
 
-        // --- Round 4: Particle System ---
         function spawnParticles(x, y, color) {
             for (let i = 0; i < 10; i++) {
                 particles.push({
@@ -315,13 +402,11 @@
             }
         }
 
-        // --- Round 2: Visuals ---
         function draw() {
-            // BG
             ctx.fillStyle = '#0f0f1a';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-            // Food (Glowing)
+            // Food
             ctx.shadowBlur = 15;
             ctx.shadowColor = '#ff0055';
             ctx.fillStyle = '#ff0055';
@@ -332,23 +417,17 @@
 
             // Snake
             snake.forEach((part, index) => {
-                // Gradient or solid color
                 ctx.fillStyle = index === 0 ? '#ffffff' : '#00ff88';
-                
                 if (index === 0) {
-                    // Head glow
                     ctx.shadowBlur = 20;
                     ctx.shadowColor = '#00ff88';
                 } else {
                     ctx.shadowBlur = 0;
                 }
-
-                // Rounded Rects
                 let x = part.x * gridSize;
                 let y = part.y * gridSize;
                 let s = gridSize - 2;
                 let r = 4;
-                
                 ctx.beginPath();
                 ctx.moveTo(x+r, y);
                 ctx.arcTo(x+s, y, x+s, y+s, r);
@@ -375,7 +454,6 @@
                 x: Math.floor(Math.random() * tileCount),
                 y: Math.floor(Math.random() * tileCount)
             };
-            // Check overlap
             for (let part of snake) {
                 if (part.x === food.x && part.y === food.y) {
                     placeFood(); 
@@ -388,6 +466,7 @@
             gameRunning = false;
             finalScoreEl.innerText = score;
             gameOverScreen.classList.remove('hidden');
+            pauseBtn.style.display = 'none';
         }
     </script>
 </body>
